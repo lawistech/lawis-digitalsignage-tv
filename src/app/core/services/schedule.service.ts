@@ -44,26 +44,30 @@ export class ScheduleService {
       return of(false);
     }
 
-    this.logService.debug('Checking for schedule changes');
+    // Get the exact time including seconds for more precise logging
     const now = new Date();
-    const currentTime = now.toTimeString().slice(0, 5); // Format: "HH:MM"
+    const currentTimeExact = now.toTimeString().slice(0, 8); // Format: "HH:MM:SS"
+    const currentTime = currentTimeExact.slice(0, 5); // Format: "HH:MM" for comparison
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
-    this.logService.debug(`Current time: ${currentTime}, day: ${currentDay}`);
+    this.logService.debug(`Checking schedule at exact time: ${currentTimeExact}, day: ${currentDay}`);
 
     return this.supabaseApi.getScreenById(this.deviceId).pipe(
       map(screen => {
         if (!screen) {
+          this.logService.warn('Screen not found when checking schedule');
           return false;
         }
         
-        // Debug info
+        // Debug logging with more details
         this.logService.debug(`Screen data: ${JSON.stringify({
           id: screen.id,
           current_playlist: screen.current_playlist,
-          has_schedule: !!screen.schedule?.upcoming?.length
+          has_schedule: !!screen.schedule?.upcoming?.length,
+          schedule_count: screen.schedule?.upcoming?.length || 0
         })}`);
 
+        // If no schedules, nothing to check
         if (!screen.schedule?.upcoming?.length) {
           this.logService.debug('No upcoming schedules found');
           return false;
@@ -75,7 +79,11 @@ export class ScheduleService {
 
         // Log all schedules for debugging
         screen.schedule.upcoming.forEach((schedule, index) => {
-          this.logService.debug(`Schedule ${index}: playlist=${schedule.playlist_id}, time=${schedule.start_time}-${schedule.end_time}, priority=${schedule.priority}`);
+          // Add seconds to the start_time and end_time for more exact comparison
+          const startTime = schedule.start_time;
+          const endTime = schedule.end_time;
+          
+          this.logService.debug(`Schedule ${index}: playlist=${schedule.playlist_id}, time=${startTime}-${endTime}, priority=${schedule.priority}`);
         });
 
         // Check each schedule - make sure to cast to the correct interface
@@ -85,23 +93,40 @@ export class ScheduleService {
                       ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
           
           const isActiveDay = days.includes(currentDay);
+          
+          // Use >= and <= for time comparison to match exactly at boundaries
           const isActiveTime = currentTime >= schedule.start_time && currentTime <= schedule.end_time;
           
-          this.logService.debug(`Checking schedule: playlist=${schedule.playlist_id}, active day=${isActiveDay}, active time=${isActiveTime}, priority=${schedule.priority}`);
+          // Add more detailed logging about the exact times being compared
+          this.logService.debug(
+            `Schedule check details: playlist=${schedule.playlist_id}, ` +
+            `activeDay=${isActiveDay}, activeTime=${isActiveTime}, ` +
+            `comparing current=${currentTime} with start=${schedule.start_time}, end=${schedule.end_time}`
+          );
           
           if (isActiveDay && isActiveTime && schedule.priority < highestPriority) {
             highestPrioritySchedule = schedule;
             highestPriority = schedule.priority;
-            this.logService.debug(`Found higher priority schedule: ${schedule.playlist_id}`);
+            this.logService.debug(`Found higher priority schedule: ${schedule.playlist_id} (priority ${schedule.priority})`);
           }
         }
 
         if (highestPrioritySchedule) {
           const newPlaylistId = highestPrioritySchedule.playlist_id;
           
+          // Track whether transition is exactly at schedule boundary
+          const isExactTransition = 
+            currentTime === highestPrioritySchedule.start_time ||
+            currentTime === highestPrioritySchedule.end_time;
+          
           // Check if this is different from current
           if (newPlaylistId !== this.currentPlaylistId) {
-            this.logService.info(`Schedule change detected! Changing playlist from ${this.currentPlaylistId || 'none'} to ${newPlaylistId}`);
+            this.logService.info(
+              `Schedule change detected at ${currentTimeExact}! ` +
+              `Changing playlist from ${this.currentPlaylistId || 'none'} to ${newPlaylistId} ` +
+              `(exact transition: ${isExactTransition})`
+            );
+            
             this.currentPlaylistId = newPlaylistId;
             
             // Update the screen record with the new playlist
@@ -257,18 +282,20 @@ export class ScheduleService {
       return;
     }
     
-    this.logService.info(`Updating current playlist on server to: ${playlistId}`);
+    const updateTime = new Date();
+    this.logService.info(`Updating current playlist on server to: ${playlistId} at ${updateTime.toISOString()}`);
     
     // Update the screen record in Supabase
     supabase
       .from('screens')
       .update({
         current_playlist: playlistId,
-        current_playlist_started_at: new Date().toISOString(),
+        current_playlist_started_at: updateTime.toISOString(),
         // Also record that this was triggered by a schedule
         analytics: {
-          last_schedule_change: new Date().toISOString(),
-          scheduled_playlist: playlistId
+          last_schedule_change: updateTime.toISOString(),
+          scheduled_playlist: playlistId,
+          exact_change_time: updateTime.toTimeString()
         }
       })
       .eq('id', this.deviceId)
@@ -276,7 +303,7 @@ export class ScheduleService {
         if (error) {
           this.logService.error(`Error updating current playlist in screens table: ${error.message}`);
         } else {
-          this.logService.info(`Current playlist updated in screens table to ${playlistId}`);
+          this.logService.info(`Current playlist updated in screens table to ${playlistId} successfully at ${updateTime.toTimeString()}`);
         }
       });
   }

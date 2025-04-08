@@ -7,6 +7,7 @@ import { PlaybackService } from '../../core/services/playback.service';
 import { ScheduleService } from '../../core/services/schedule.service';
 import { HeartbeatService } from '../../core/services/heartbeat.service';
 import { LogService } from '../../core/services/log.service';
+import { SupabaseApiService } from '../../core/services/supabase-api.service';
 import { PlaylistItem } from '../../core/models/playlist.model';
 import { PlayerState } from '../../core/models/player-state.model';
 import { ImageItemComponent } from './components/image-item.component';
@@ -37,9 +38,9 @@ export class PlayerComponent implements OnInit, OnDestroy {
   isFullscreen = false;
   isOnline = navigator.onLine;
   
-  // Add missing properties
   private lastTimeCheck: number = 0;
   private preciseMinuteInterval: any = null;
+  private transitionTimeoutIds: number[] = [];
   
   private subscriptions: Subscription[] = [];
   private heartbeatInterval: Subscription | null = null;
@@ -50,6 +51,7 @@ export class PlayerComponent implements OnInit, OnDestroy {
     private scheduleService: ScheduleService,
     private heartbeatService: HeartbeatService,
     private logService: LogService,
+    private supabaseApi: SupabaseApiService,
     private router: Router,
     private elementRef: ElementRef
   ) {
@@ -131,6 +133,9 @@ export class PlayerComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    // Clear all transition timeouts
+    this.transitionTimeoutIds.forEach(id => clearTimeout(id));
+    
     // Clean up all subscriptions
     this.subscriptions.forEach(sub => sub.unsubscribe());
     if (this.heartbeatInterval) {
@@ -276,15 +281,15 @@ export class PlayerComponent implements OnInit, OnDestroy {
       this.checkScheduleAndReload();
     }, 3000);
     
-    // Check every minute - we need to be precise for schedule changes
-    this.scheduleCheckInterval = interval(60000).subscribe(() => {
+    // Check more frequently - every 20 seconds instead of every minute
+    this.scheduleCheckInterval = interval(20000).subscribe(() => {
       const now = new Date();
       this.logService.debug(`Schedule check at ${now.toTimeString()}`);
       this.checkScheduleAndReload();
     });
     
-    // Additional check exactly at minute boundaries (00, 15, 30, 45)
-    this.setupPreciseMinuteChecks();
+    // Setup more precise checks exactly at scheduled times
+    this.setupTargetedScheduleChecks();
   }
 
   // Helper method to check schedule and reload if needed
@@ -302,6 +307,96 @@ export class PlayerComponent implements OnInit, OnDestroy {
         this.logService.error(`Schedule check error: ${error}`);
       }
     );
+  }
+
+  // New method to set up targeted checks at known schedule times
+  private setupTargetedScheduleChecks(): void {
+    // First clear any existing interval
+    if (this.preciseMinuteInterval) {
+      clearInterval(this.preciseMinuteInterval);
+      this.preciseMinuteInterval = null;
+    }
+    
+    // Get all scheduled playlists and set up targeted checks for each transition time
+    const deviceId = localStorage.getItem('deviceId');
+    if (!deviceId) return;
+    
+    this.logService.info('Setting up targeted schedule checks');
+    
+    // Get screen configuration with schedules
+    this.supabaseApi.getScreenById(deviceId).subscribe(screen => {
+      if (!screen || !screen.schedule || !screen.schedule.upcoming) {
+        this.logService.warn('No schedules found for targeted checks');
+        return;
+      }
+      
+      // Extract all unique transition times
+      const transitionTimes = new Set<string>();
+      screen.schedule.upcoming.forEach(schedule => {
+        transitionTimes.add(schedule.start_time);
+        transitionTimes.add(schedule.end_time);
+      });
+      
+      this.logService.info(`Found ${transitionTimes.size} unique transition times to monitor`);
+      
+      // For each transition time, set up a check 5 seconds before and after the scheduled time
+      transitionTimes.forEach(timeStr => {
+        this.setupTransitionTimeChecks(timeStr);
+      });
+    });
+  }
+
+  // New method to set up checks for a specific schedule transition time
+  private setupTransitionTimeChecks(timeStr: string): void {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    
+    // Calculate milliseconds until the next occurrence of this time
+    const calculateMsToTime = (): number => {
+      const now = new Date();
+      const target = new Date();
+      
+      target.setHours(hours, minutes, 0, 0);
+      
+      // If the target time is already passed for today, schedule for tomorrow
+      if (now > target) {
+        target.setDate(target.getDate() + 1);
+      }
+      
+      return target.getTime() - now.getTime();
+    };
+    
+    // Set up targeted checks for this time
+    const scheduleNextCheck = () => {
+      const msToTime = calculateMsToTime();
+      
+      // Schedule check 5 seconds before the transition time
+      const beforeCheck = setTimeout(() => {
+        this.logService.info(`Pre-transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+      }, msToTime - 5000);
+      
+      // Schedule check exactly at the transition time
+      const exactCheck = setTimeout(() => {
+        this.logService.info(`Exact transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+      }, msToTime);
+      
+      // Schedule check 5 seconds after the transition time
+      const afterCheck = setTimeout(() => {
+        this.logService.info(`Post-transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+        
+        // Set up the next day's check
+        scheduleNextCheck();
+      }, msToTime + 5000);
+      
+      // Store the timeouts so they can be cleared if needed
+      this.transitionTimeoutIds.push(beforeCheck, exactCheck, afterCheck);
+    };
+    
+    // Start the process
+    scheduleNextCheck();
+    this.logService.info(`Set up transition checks for time: ${timeStr}`);
   }
 
   // Add precise timing checks
