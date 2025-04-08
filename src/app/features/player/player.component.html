@@ -1,0 +1,92 @@
+<!-- player.component.html -->
+<div class="player-container">
+  <!-- Error overlay - only shown when there's a playback error -->
+  <div *ngIf="playbackError" class="error-overlay">
+    <div class="error-container">
+      <span class="material-icons error-icon">error_outline</span>
+      <h3>Playback Error</h3>
+      <p>{{ playbackError }}</p>
+      <p class="recovery-message">Attempting to recover...</p>
+      <button class="reload-button" (click)="reloadPlaylist()">
+        <span class="material-icons">refresh</span> Reload Content
+      </button>
+    </div>
+  </div>
+
+
+  <!-- Main content container -->
+  <div class="content-container">
+    <!-- Current content item -->
+    <div class="content-item current" [class.fade-out]="isTransitioning">
+      <ng-container [ngSwitch]="currentItem?.type">
+        <!-- Image content -->
+        <app-image-item 
+          *ngSwitchCase="'image'" 
+          [item]="currentItem"
+          [scaling]="currentItem?.settings?.scaling || 'fit'"
+          (ended)="skipToNext()">
+        </app-image-item>
+
+        <!-- Video content -->
+        <app-video-item 
+          *ngSwitchCase="'video'" 
+          [item]="currentItem"
+          [muted]="currentItem?.settings?.muted ?? true"
+          [loop]="currentItem?.settings?.loop ?? false"
+          (ended)="skipToNext()">
+        </app-video-item>
+
+        <!-- Web content -->
+        <app-web-item 
+          *ngSwitchCase="'webpage'" 
+          [item]="currentItem"
+          [duration]="currentItem?.duration || 10"
+          (ended)="skipToNext()">
+        </app-web-item>
+
+        <!-- Ticker/text content -->
+        <app-ticker-item 
+          *ngSwitchCase="'ticker'" 
+          [item]="currentItem"
+          [duration]="currentItem?.duration || 10"
+          (ended)="skipToNext()">
+        </app-ticker-item>
+
+        <!-- Fallback for unknown content type -->
+        <div *ngSwitchDefault class="fallback-content">
+          <span class="material-icons">image_not_supported</span>
+          <p>Unsupported content type</p>
+        </div>
+      </ng-container>
+    </div>
+
+    <!-- Next content item (preloaded but hidden until transition) -->
+    <div *ngIf="nextItem && isTransitioning" class="content-item next" [class.fade-in]="isTransitioning">
+      <ng-container [ngSwitch]="nextItem.type">
+        <app-image-item *ngSwitchCase="'image'" [item]="nextItem" [preload]="true"></app-image-item>
+        <app-video-item *ngSwitchCase="'video'" [item]="nextItem" [preload]="true"></app-video-item>
+        <app-web-item *ngSwitchCase="'webpage'" [item]="nextItem" [preload]="true"></app-web-item>
+        <app-ticker-item *ngSwitchCase="'ticker'" [item]="nextItem" [preload]="true"></app-ticker-item>
+      </ng-container>
+    </div>
+  </div>
+
+  <!-- Diagnostic overlay -->
+  <div *ngIf="playerState$ | async as state" class="diagnostics-overlay">
+    <div class="info-pill">
+      <div class="status-indicator" [class.online]="isOnline" [class.offline]="!isOnline"></div>
+      <span class="playlist-name">{{ state.currentPlaylistName }}</span>
+      <span class="item-counter">{{ state.currentItemIndex + 1 }}/{{ state.totalItems }}</span>
+      
+      <!-- Manual refresh button -->
+      <button class="control-button refresh-button" (click)="reloadPlaylist()" title="Reload Playlist">
+        <span class="material-icons">refresh</span>
+      </button>
+      
+      <!-- Fullscreen toggle button -->
+      <button class="control-button fullscreen-toggle" (click)="toggleFullscreen()" title="Toggle Fullscreen">
+        <span class="material-icons">{{ isFullscreen ? 'fullscreen_exit' : 'fullscreen' }}</span>
+      </button>
+    </div>
+  </div>
+</div>

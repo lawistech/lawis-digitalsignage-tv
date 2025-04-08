@@ -1,0 +1,250 @@
+/* player.component.scss */
+:host {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #000;
+}
+
+.player-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.content-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.content-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  &.current {
+    z-index: 10;
+  }
+  
+  &.next {
+    z-index: 5;
+  }
+}
+
+// Transition animations
+.fade-out {
+  animation: fadeOut 0.5s ease-out forwards;
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in forwards;
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+// Error overlay styles
+.error-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.85);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.error-container {
+  text-align: center;
+  padding: 2rem;
+  background-color: rgba(220, 53, 69, 0.2);
+  border-radius: 8px;
+  max-width: 80%;
+  
+  .error-icon {
+    font-size: 4rem;
+    color: #dc3545;
+    margin-bottom: 1rem;
+  }
+  
+  h3 {
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  
+  .recovery-message {
+    margin-top: 1rem;
+    font-style: italic;
+    opacity: 0.8;
+  }
+  
+  .reload-button {
+    margin-top: 1.5rem;
+    background-color: #0d6efd;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.75rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    margin-left: auto;
+    margin-right: auto;
+    transition: background-color 0.2s;
+    
+    &:hover {
+      background-color: #0b5ed7;
+    }
+  }
+}
+
+// Offline banner
+.offline-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  background-color: rgba(255, 193, 7, 0.9);
+  color: #212529;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  z-index: 90;
+  font-size: 0.875rem;
+  font-weight: 500;
+  
+  .material-icons {
+    font-size: 1rem;
+  }
+}
+
+// Fallback content
+.fallback-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #6c757d;
+  
+  .material-icons {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+  }
+}
+
+// Diagnostic overlay
+.diagnostics-overlay {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 50;
+}
+
+.info-pill {
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  backdrop-filter: blur(4px);
+  
+  .status-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    
+    &.online {
+      background-color: #10b981; // green
+    }
+    
+    &.offline {
+      background-color: #ef4444; // red
+    }
+  }
+  
+  .playlist-name {
+    max-width: 150px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* Control buttons */
+.control-button {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 0.5rem;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s, transform 0.2s;
+  
+  &:hover {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+.refresh-button {
+  color: #10b981; // green
+}
+
+/* Fullscreen styles */
+:host {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #000;
+}
+
+/* Make sure the player fills the entire screen in fullscreen mode */
+:fullscreen .player-container,
+:-webkit-full-screen .player-container,
+:-moz-full-screen .player-container,
+:-ms-fullscreen .player-container {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Fix for Safari and iOS */
+.player-container:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+}

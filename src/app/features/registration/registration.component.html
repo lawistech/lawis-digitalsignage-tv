@@ -1,0 +1,70 @@
+<div class="registration-container">
+  <!-- Registration Card -->
+  <div class="registration-card">
+    <div class="logo">
+      <!-- Logo placeholder - replace with your actual logo -->
+      <div style="font-size: 2rem; font-weight: bold; color: #3f51b5;">Digital Signage</div>
+    </div>
+
+    <!-- Step 1: Code Generation -->
+    <ng-container *ngIf="step === 'generate'">
+      <h1>Register Your Screen</h1>
+      <div class="content">
+        <p>Enter this code in the admin panel to connect this screen:</p>
+        
+        <div class="code-display">
+          <span *ngFor="let digit of registrationCode.split('')">{{ digit }}</span>
+        </div>
+
+        <!-- Code saved indicator -->
+        <div *ngIf="codeIsSaved" class="saved-indicator">
+          <span class="material-icons">save</span>
+          <p>This code will be remembered if you refresh the page</p>
+        </div>
+        
+        <p class="status-message">Waiting for activation...</p>
+        <p class="help-text">This code will expire in {{ timeRemaining }} minutes. Please complete the registration before then.</p>
+        
+        <!-- Add a regenerate button to get a new code if needed -->
+        <button (click)="regenerateCode()" class="regenerate-button">
+          <span class="material-icons">refresh</span> 
+          Generate New Code
+        </button>
+      </div>
+    </ng-container>
+
+    <!-- Step 2: Connecting -->
+    <ng-container *ngIf="step === 'connecting'">
+      <h1>Registration Successful!</h1>
+      <div class="content">
+        <div class="success-icon">
+          <span class="material-icons">check_circle</span>
+        </div>
+        <p class="status-message">Screen has been registered successfully</p>
+        <p>Connecting to the content server...</p>
+        <div class="loader">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </ng-container>
+
+    <!-- Step 3: Error -->
+    <ng-container *ngIf="step === 'error'">
+      <h1>Registration Error</h1>
+      <div class="content">
+        <div class="error-icon">
+          <span class="material-icons">error_outline</span>
+        </div>
+        <p class="error-message">{{ errorMessage }}</p>
+        <button (click)="restartRegistration()" class="retry-button">Try Again</button>
+      </div>
+    </ng-container>
+  </div>
+
+  <!-- Device info for debugging -->
+  <div class="device-info">
+    <p>Screen Resolution: {{ getResolution() }}</p>
+    <p>Browser: {{ getBrowser() }}</p>
+    <p>Registration code: {{ registrationCode }}</p>
+  </div>
+</div>

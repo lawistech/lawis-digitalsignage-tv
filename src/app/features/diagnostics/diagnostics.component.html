@@ -1,0 +1,117 @@
+
+<div class="diagnostics-container">
+    <header class="header">
+      <h1>Digital Signage Diagnostics</h1>
+      <div class="header-actions">
+        <button (click)="goBack()" class="action-button">
+          <span class="material-icons">arrow_back</span>
+        </button>
+        <button (click)="refreshData()" class="action-button">
+          <span class="material-icons">refresh</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="content">
+      <section class="info-section">
+        <h2>Device Information</h2>
+        <div class="info-grid">
+          <div class="info-card">
+            <p class="label">Device ID</p>
+            <p class="value">{{ deviceId || 'Not registered' }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">App Version</p>
+            <p class="value">{{ appVersion }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">Resolution</p>
+            <p class="value">{{ screenResolution }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">Browser</p>
+            <p class="value">{{ browserInfo }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">Connection</p>
+            <p class="value" [class.status-online]="isOnline" [class.status-offline]="!isOnline">
+              {{ isOnline ? 'Online' : 'Offline' }}
+            </p>
+          </div>
+          <div class="info-card">
+            <p class="label">Last Heartbeat</p>
+            <p class="value">{{ lastHeartbeat || 'Never' }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="performance-section">
+        <h2>Performance Metrics</h2>
+        <div class="info-grid">
+          <div class="info-card">
+            <p class="label">Uptime</p>
+            <p class="value">{{ uptime }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">Memory Usage</p>
+            <p class="value">{{ memoryUsage }}</p>
+          </div>
+          <div class="info-card">
+            <p class="label">Cache Size</p>
+            <p class="value">{{ cacheSize }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="logs-section">
+        <h2>System Logs</h2>
+        <div class="log-controls">
+          <button (click)="clearLogs()" class="action-button">
+            Clear Logs
+          </button>
+          <select [(ngModel)]="logFilter" class="log-filter">
+            <option value="all">All Logs</option>
+            <option value="error">Errors Only</option>
+            <option value="warn">Warnings & Errors</option>
+            <option value="info">Info & Above</option>
+          </select>
+        </div>
+        <div class="log-container">
+          <div *ngFor="let log of filteredLogs" class="log-entry" [ngClass]="getLogClass(log)">
+            <span class="log-time">{{ formatTime(log.timestamp) }}</span>
+            <span class="log-level">{{ getLogLevelText(log.level) }}</span>
+            <span class="log-message">{{ log.message }}</span>
+          </div>
+          <div *ngIf="filteredLogs.length === 0" class="no-logs">
+            No logs to display
+          </div>
+        </div>
+      </section>
+
+      <section class="actions-section">
+        <h2>Troubleshooting</h2>
+        <div class="action-buttons">
+          <button (click)="clearCache()" class="problem-button">
+            <span class="material-icons">cleaning_services</span>
+            Clear Cache
+          </button>
+          <button (click)="restartPlayer()" class="problem-button">
+            <span class="material-icons">refresh</span>
+            Restart Player
+          </button>
+          <button (click)="reloadContent()" class="problem-button">
+            <span class="material-icons">sync</span>
+            Reload Content
+          </button>
+          <button (click)="factoryReset()" class="problem-button danger">
+            <span class="material-icons">restart_alt</span>
+            Factory Reset
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <footer class="footer">
+      <p>Press Alt+D to exit diagnostics mode</p>
+    </footer>
+  </div>
