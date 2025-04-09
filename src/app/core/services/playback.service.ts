@@ -59,6 +59,19 @@ export class PlaybackService {
   ) {
     // Set up subscription to device screen ID from local storage
     this.setup();
+    
+    // Subscribe to schedule changes
+    this.scheduleService.scheduleChange$.subscribe(playlistId => {
+      this.logService.info(`Received schedule change notification for playlist: ${playlistId}`);
+      // Force stop any current playback
+      this.isPlaying = false;
+      this.clearTransition();
+      
+      // Force Angular change detection by delaying slightly
+      setTimeout(() => {
+        this.loadPlaylist(playlistId);
+      }, 100);
+    });
   }
   
   private setup(): void {
@@ -228,7 +241,9 @@ export class PlaybackService {
         // Priority 1: Check schedule for current time
         if (screen.schedule && screen.schedule.upcoming && screen.schedule.upcoming.length > 0) {
           const now = new Date();
-          const currentTime = now.toTimeString().slice(0, 5); // Format: "HH:MM"
+          const currentHours = now.getHours().toString().padStart(2, '0');
+          const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+          const currentTime = `${currentHours}:${currentMinutes}`; // Format: "HH:MM"
           const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
           
           // Sort schedules by priority first, then start_time
@@ -302,6 +317,11 @@ export class PlaybackService {
     
     // Cancel any pending transitions
     this.clearTransition();
+    
+    // Reset current items to force UI update
+    this.currentItem$.next(null);
+    this.nextItem$.next(null);
+    this.isTransitioning$.next(false);
     
     // Mark as loading in player state
     this.updatePlayerState({
@@ -382,9 +402,11 @@ export class PlaybackService {
   // New helper method to process playlists
   private processPlaylist(playlist: Playlist): void {
     if (playlist && playlist.items && playlist.items.length > 0) {
+      // Reset internal state to ensure a fresh start
       this.currentPlaylist = playlist;
       this.currentIndex = 0;
       this.playbackError$.next(null);
+      this.isPlaying = true;
       
       // Start preloading all content
       this.preloadAllContent(playlist);
@@ -398,8 +420,14 @@ export class PlaybackService {
         totalItems: playlist.items.length
       });
       
-      // Start playing
-      this.playCurrentItem();
+      // Force reset of current content
+      this.currentItem$.next(null);
+      
+      // Add a small delay before starting playback to ensure UI is ready
+      setTimeout(() => {
+        // Start playing
+        this.playCurrentItem();
+      }, 100);
     } else {
       this.logService.error('Playlist is empty or could not be loaded');
       this.playbackError$.next('Playlist is empty or could not be loaded');
@@ -452,17 +480,18 @@ export class PlaybackService {
     
     // Set the current item
     this.currentItem$.next(null); // First set to null to force Angular change detection
+    
+    // Force a delay to ensure the UI refreshes
     setTimeout(() => {
+      this.logService.info(`Playing item: ${item.name} (${this.currentIndex + 1}/${this.currentPlaylist!.items.length})`);
       this.currentItem$.next(item); // Then set the new item in next tick
-    }, 0);
-    
-    // Update player state
-    this.updatePlayerState({
-      isPlaying: true,
-      currentItemIndex: this.currentIndex
-    });
-    
-    this.logService.info(`Playing item: ${item.name} (${this.currentIndex + 1}/${this.currentPlaylist.items.length})`);
+      
+      // Update player state
+      this.updatePlayerState({
+        isPlaying: true,
+        currentItemIndex: this.currentIndex
+      });
+    }, 50);
   }
   
   // Preload the next item

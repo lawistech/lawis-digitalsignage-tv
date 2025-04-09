@@ -1,7 +1,7 @@
 // schedule.service.ts
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, of, from } from 'rxjs';
+import { Observable, of, from, Subject } from 'rxjs';
 import { catchError, map, switchMap } from 'rxjs/operators';
 import { LogService } from './log.service';
 import { SupabaseApiService } from './supabase-api.service';
@@ -21,6 +21,10 @@ interface ScheduleItem {
 export class ScheduleService {
   private deviceId: string | null = null;
   private currentPlaylistId: string | null = null;
+  
+  // Add a Subject to emit schedule change events
+  private scheduleChangeSubject = new Subject<string>();
+  public scheduleChange$ = this.scheduleChangeSubject.asObservable();
 
   constructor(
     private http: HttpClient,
@@ -47,7 +51,9 @@ export class ScheduleService {
     // Get the exact time including seconds for more precise logging
     const now = new Date();
     const currentTimeExact = now.toTimeString().slice(0, 8); // Format: "HH:MM:SS"
-    const currentTime = currentTimeExact.slice(0, 5); // Format: "HH:MM" for comparison
+    const currentHours = now.getHours().toString().padStart(2, '0');
+    const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+    const currentTime = `${currentHours}:${currentMinutes}`; // Format: "HH:MM" for comparison
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
     
     this.logService.debug(`Checking schedule at exact time: ${currentTimeExact}, day: ${currentDay}`);
@@ -132,6 +138,9 @@ export class ScheduleService {
             // Update the screen record with the new playlist
             this.updateCurrentPlaylist(newPlaylistId);
             
+            // Emit the change event with the new playlist ID
+            this.scheduleChangeSubject.next(newPlaylistId);
+            
             return true;
           } else {
             this.logService.debug(`Current playlist ${this.currentPlaylistId} matches schedule, no change needed`);
@@ -140,6 +149,10 @@ export class ScheduleService {
           // No active schedule, revert to default playlist if different
           this.logService.info(`No active schedule, changing to default playlist: ${screen.current_playlist}`);
           this.currentPlaylistId = screen.current_playlist;
+          
+          // Emit the change event for the default playlist
+          this.scheduleChangeSubject.next(screen.current_playlist);
+          
           return true;
         }
         
@@ -171,7 +184,9 @@ export class ScheduleService {
 
             // Get the current time and day
             const now = new Date();
-            const currentTime = now.toTimeString().slice(0, 5); // Format: "HH:MM"
+            const currentHours = now.getHours().toString().padStart(2, '0');
+            const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+            const currentTime = `${currentHours}:${currentMinutes}`;
             const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
             
             // Check scheduled items from playlist_items table
@@ -202,6 +217,10 @@ export class ScheduleService {
                   if (bestMatch.playlist_id !== this.currentPlaylistId) {
                     this.currentPlaylistId = bestMatch.playlist_id;
                     this.updateCurrentPlaylist(bestMatch.playlist_id);
+                    
+                    // Emit the change event
+                    this.scheduleChangeSubject.next(bestMatch.playlist_id);
+                    
                     return true;
                   }
                 }
@@ -250,17 +269,23 @@ export class ScheduleService {
     
     const now = new Date();
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTime = now.toTimeString().slice(0, 5); // Format: "HH:MM"
+    
+    // Format current time as "HH:MM" for exact string comparison
+    const currentHours = now.getHours().toString().padStart(2, '0');
+    const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+    const currentTime = `${currentHours}:${currentMinutes}`;
+    
+    this.logService.debug(`Finding schedule for time ${currentTime} on ${currentDay}`);
     
     // Filter schedules that match the current day and time
     const matchingSchedules = schedules.filter(schedule => {
-      return (
-        // Day matches
-        schedule.days_of_week.includes(currentDay) &&
-        // Time is within the range
-        schedule.start_time <= currentTime &&
-        schedule.end_time >= currentTime
-      );
+      // Ensure exact formatting for comparison
+      const withinTimeRange = currentTime >= schedule.start_time && currentTime <= schedule.end_time;
+      
+      const isMatch = schedule.days_of_week.includes(currentDay) && withinTimeRange;
+      this.logService.debug(`Schedule ${schedule.playlist_id}: day match=${schedule.days_of_week.includes(currentDay)}, time match=${withinTimeRange} (${currentTime} between ${schedule.start_time}-${schedule.end_time})`);
+      
+      return isMatch;
     });
     
     if (!matchingSchedules.length) {

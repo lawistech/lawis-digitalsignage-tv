@@ -1,8 +1,9 @@
 // player.component.ts
-import { Component, OnInit, OnDestroy, HostListener, ElementRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener, ElementRef, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { Observable, Subscription, interval, fromEvent } from 'rxjs';
+import { Observable, Subscription, interval, fromEvent, of } from 'rxjs';
+import { switchMap, catchError, tap } from 'rxjs/operators';
 import { PlaybackService } from '../../core/services/playback.service';
 import { ScheduleService } from '../../core/services/schedule.service';
 import { HeartbeatService } from '../../core/services/heartbeat.service';
@@ -40,7 +41,8 @@ export class PlayerComponent implements OnInit, OnDestroy {
   
   private lastTimeCheck: number = 0;
   private preciseMinuteInterval: any = null;
-  private transitionTimeoutIds: number[] = [];
+  private transitionTimeoutIds: any[] = [];
+  private forceReloadTimeoutId: any = null;
   
   private subscriptions: Subscription[] = [];
   private heartbeatInterval: Subscription | null = null;
@@ -53,13 +55,59 @@ export class PlayerComponent implements OnInit, OnDestroy {
     private logService: LogService,
     private supabaseApi: SupabaseApiService,
     private router: Router,
-    private elementRef: ElementRef
+    private elementRef: ElementRef,
+    private zone: NgZone
   ) {
     this.playerState$ = this.playbackService.playerState$;
     this.logService.setDebugLevel(0); // Set to lowest level for maximum verbosity
     this.logService.info('Player component initialized with verbose logging');
   }
 
+  ngOnInit(): void {
+    this.setupNetworkListeners();
+    this.setupTimeChangeListeners();
+    this.setupPlayback();
+    this.setupScheduleChecking();
+    this.startHeartbeat();
+    
+    // Ensure we're in fullscreen mode
+    this.enterFullscreen();
+    
+    // Log player startup
+    this.logService.info('Player started');
+    
+    // Subscribe to schedule changes directly
+    const scheduleChangeSub = this.scheduleService.scheduleChange$.subscribe(playlistId => {
+      this.logService.info(`Schedule change received in player component: ${playlistId}`);
+      // Force a complete reload to ensure the view updates
+      this.forceReloadPlaylist(playlistId);
+    });
+    
+    this.subscriptions.push(scheduleChangeSub);
+  }
+
+  ngOnDestroy(): void {
+    // Clear all transition timeouts
+    this.transitionTimeoutIds.forEach(id => clearTimeout(id));
+    
+    if (this.forceReloadTimeoutId) {
+      clearTimeout(this.forceReloadTimeoutId);
+    }
+    
+    // Clean up all subscriptions
+    this.subscriptions.forEach(sub => sub.unsubscribe());
+    if (this.heartbeatInterval) {
+      this.heartbeatInterval.unsubscribe();
+    }
+    if (this.scheduleCheckInterval) {
+      this.scheduleCheckInterval.unsubscribe();
+    }
+    if (this.preciseMinuteInterval) {
+      clearInterval(this.preciseMinuteInterval);
+    }
+    this.logService.info('Player stopped');
+  }
+  
   // Handle key presses (useful for debugging/admin functions)
   @HostListener('document:keydown', ['$event'])
   handleKeyboardEvent(event: KeyboardEvent) {
@@ -83,19 +131,23 @@ export class PlayerComponent implements OnInit, OnDestroy {
       this.playbackService.reloadPlaylist();
     }
   }
-
-  ngOnInit(): void {
-    this.setupNetworkListeners();
-    this.setupTimeChangeListeners();
-    this.setupPlayback();
-    this.setupScheduleChecking();
-    this.startHeartbeat();
+  
+  private setupNetworkListeners(): void {
+    // Listen for online/offline events
+    const onlineSubscription = fromEvent(window, 'online').subscribe(() => {
+      this.isOnline = true;
+      this.logService.info('Network connection restored');
+      
+      // Force reload playlist when we come back online
+      this.playbackService.reloadPlaylist();
+    });
     
-    // Ensure we're in fullscreen mode
-    this.enterFullscreen();
+    const offlineSubscription = fromEvent(window, 'offline').subscribe(() => {
+      this.isOnline = false;
+      this.logService.warn('Network connection lost');
+    });
     
-    // Log player startup
-    this.logService.info('Player started');
+    this.subscriptions.push(onlineSubscription, offlineSubscription);
   }
 
   private setupTimeChangeListeners(): void {
@@ -132,40 +184,202 @@ export class PlayerComponent implements OnInit, OnDestroy {
     this.subscriptions.push(subscription);
   }
 
-  ngOnDestroy(): void {
-    // Clear all transition timeouts
-    this.transitionTimeoutIds.forEach(id => clearTimeout(id));
+  private setupPlayback(): void {
+    // Subscribe to current item changes
+    const currentItemSub = this.playbackService.currentItem$.subscribe(item => {
+      // Wrap in NgZone to ensure change detection
+      this.zone.run(() => {
+        this.currentItem = item;
+        if (item) {
+          this.logService.info(`Playing item: ${item.name}`);
+        }
+      });
+    });
+
+    // Subscribe to next item changes
+    const nextItemSub = this.playbackService.nextItem$.subscribe(item => {
+      this.zone.run(() => {
+        this.nextItem = item;
+      });
+    });
+
+    // Subscribe to transition state
+    const transitionSub = this.playbackService.isTransitioning$.subscribe(transitioning => {
+      this.zone.run(() => {
+        this.isTransitioning = transitioning;
+      });
+    });
+
+    // Subscribe to errors
+    const errorSub = this.playbackService.playbackError$.subscribe(error => {
+      this.zone.run(() => {
+        this.playbackError = error;
+        if (error) {
+          this.logService.error(`Playback error: ${error}`);
+        }
+      });
+    });
     
-    // Clean up all subscriptions
-    this.subscriptions.forEach(sub => sub.unsubscribe());
-    if (this.heartbeatInterval) {
-      this.heartbeatInterval.unsubscribe();
-    }
-    if (this.scheduleCheckInterval) {
-      this.scheduleCheckInterval.unsubscribe();
-    }
-    if (this.preciseMinuteInterval) {
-      clearInterval(this.preciseMinuteInterval);
-    }
-    this.logService.info('Player stopped');
+    // Subscribe to player state
+    const playerStateSub = this.playerState$.subscribe(state => {
+      this.zone.run(() => {
+        this.currentPlayerState = state;
+      });
+    });
+
+    this.subscriptions.push(currentItemSub, nextItemSub, transitionSub, errorSub, playerStateSub);
+
+    // Start playback
+    this.playbackService.startPlayback();
   }
-  
-  private setupNetworkListeners(): void {
-    // Listen for online/offline events
-    const onlineSubscription = fromEvent(window, 'online').subscribe(() => {
-      this.isOnline = true;
-      this.logService.info('Network connection restored');
+
+  private setupScheduleChecking(): void {
+    // Initial check on startup with a small delay to ensure everything is loaded
+    setTimeout(() => {
+      this.logService.info('Performing initial schedule check');
+      this.checkScheduleAndReload();
+    }, 3000);
+    
+    // Check more frequently - every 15 seconds instead of every minute
+    this.scheduleCheckInterval = interval(15000).subscribe(() => {
+      const now = new Date();
+      this.logService.debug(`Schedule check at ${now.toTimeString()}`);
+      this.checkScheduleAndReload();
+    });
+    
+    // Setup more precise checks exactly at scheduled times
+    this.setupTargetedScheduleChecks();
+    
+    // Also add precise minute boundary checks
+    this.setupPreciseMinuteChecks();
+  }
+
+  // Helper method to check schedule and reload if needed
+  // Helper method to check schedule and reload if needed
+  private checkScheduleAndReload(): void {
+    this.scheduleService.checkSchedule().subscribe(
+      (changed: boolean) => {
+        if (changed) {
+          this.logService.info('Schedule changed, reloading playlist');
+          // Note: We no longer need to call reloadPlaylist directly here
+          // because we're already reacting to the scheduleChange$ events
+        } else {
+          this.logService.debug('No schedule changes detected');
+        }
+      },
+      (error: any) => {
+        this.logService.error(`Schedule check error: ${error}`);
+      }
+    );
+  }
+
+  // New method to set up targeted checks at known schedule times
+  private setupTargetedScheduleChecks(): void {
+    // First clear any existing timeouts
+    this.transitionTimeoutIds.forEach(id => clearTimeout(id));
+    this.transitionTimeoutIds = [];
+    
+    // Get all scheduled playlists and set up targeted checks for each transition time
+    const deviceId = localStorage.getItem('deviceId');
+    if (!deviceId) return;
+    
+    this.logService.info('Setting up targeted schedule checks');
+    
+    // Get screen configuration with schedules
+    this.supabaseApi.getScreenById(deviceId).subscribe(screen => {
+      if (!screen || !screen.schedule || !screen.schedule.upcoming) {
+        this.logService.warn('No schedules found for targeted checks');
+        return;
+      }
       
-      // Force reload playlist when we come back online
-      this.playbackService.reloadPlaylist();
+      // Extract all unique transition times
+      const transitionTimes = new Set<string>();
+      screen.schedule.upcoming.forEach(schedule => {
+        transitionTimes.add(schedule.start_time);
+        transitionTimes.add(schedule.end_time);
+      });
+      
+      this.logService.info(`Found ${transitionTimes.size} unique transition times to monitor`);
+      
+      // For each transition time, set up a check 5 seconds before and after the scheduled time
+      transitionTimes.forEach(timeStr => {
+        this.setupTransitionTimeChecks(timeStr);
+      });
     });
+  }
+
+  // New method to set up checks for a specific schedule transition time
+  private setupTransitionTimeChecks(timeStr: string): void {
+    const [hours, minutes] = timeStr.split(':').map(Number);
     
-    const offlineSubscription = fromEvent(window, 'offline').subscribe(() => {
-      this.isOnline = false;
-      this.logService.warn('Network connection lost');
-    });
+    // Calculate milliseconds until the next occurrence of this time
+    const calculateMsToTime = (): number => {
+      const now = new Date();
+      const target = new Date();
+      
+      target.setHours(hours, minutes, 0, 0);
+      
+      // If the target time is already passed for today, schedule for tomorrow
+      if (now > target) {
+        target.setDate(target.getDate() + 1);
+      }
+      
+      return target.getTime() - now.getTime();
+    };
     
-    this.subscriptions.push(onlineSubscription, offlineSubscription);
+    // Set up targeted checks for this time
+    const scheduleNextCheck = () => {
+      const msToTime = calculateMsToTime();
+      
+      // Schedule check 10 seconds before the transition time
+      const beforeCheck = setTimeout(() => {
+        this.logService.info(`Pre-transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+      }, msToTime - 10000);
+      
+      // Schedule check exactly at the transition time
+      const exactCheck = setTimeout(() => {
+        this.logService.info(`Exact transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+      }, msToTime);
+      
+      // Schedule check 10 seconds after the transition time
+      const afterCheck = setTimeout(() => {
+        this.logService.info(`Post-transition check for ${timeStr}`);
+        this.checkScheduleAndReload();
+        
+        // Set up the next day's check
+        scheduleNextCheck();
+      }, msToTime + 10000);
+      
+      // Store the timeouts so they can be cleared if needed
+      this.transitionTimeoutIds.push(beforeCheck, exactCheck, afterCheck);
+    };
+    
+    // Start the process
+    scheduleNextCheck();
+    this.logService.info(`Set up transition checks for time: ${timeStr}`);
+  }
+
+  // Add precise timing checks at minute boundaries
+  private setupPreciseMinuteChecks(): void {
+    // Check how many milliseconds until the next minute boundary
+    const now = new Date();
+    const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+    
+    // Set up a timeout to check at the next minute boundary
+    setTimeout(() => {
+      const exactMinute = new Date();
+      this.logService.info(`Precise minute check at ${exactMinute.toTimeString()}`);
+      this.checkScheduleAndReload();
+      
+      // Then set up an interval to check every minute precisely at the minute boundary
+      this.preciseMinuteInterval = setInterval(() => {
+        const nextExactMinute = new Date();
+        this.logService.info(`Precise minute check at ${nextExactMinute.toTimeString()}`);
+        this.checkScheduleAndReload();
+      }, 60000);
+    }, msToNextMinute);
   }
 
   // Toggle fullscreen
@@ -236,187 +450,27 @@ export class PlayerComponent implements OnInit, OnDestroy {
     this.logService.info(`Fullscreen state changed: ${this.isFullscreen ? 'enabled' : 'disabled'}`);
   }
 
-  private setupPlayback(): void {
-    // Subscribe to current item changes
-    const currentItemSub = this.playbackService.currentItem$.subscribe(item => {
-      this.currentItem = item;
-      if (item) {
-        this.logService.info(`Playing item: ${item.name}`);
-      }
-    });
-
-    // Subscribe to next item changes
-    const nextItemSub = this.playbackService.nextItem$.subscribe(item => {
-      this.nextItem = item;
-    });
-
-    // Subscribe to transition state
-    const transitionSub = this.playbackService.isTransitioning$.subscribe(transitioning => {
-      this.isTransitioning = transitioning;
-    });
-
-    // Subscribe to errors
-    const errorSub = this.playbackService.playbackError$.subscribe(error => {
-      this.playbackError = error;
-      if (error) {
-        this.logService.error(`Playback error: ${error}`);
-      }
-    });
-    
-    // Subscribe to player state
-    const playerStateSub = this.playerState$.subscribe(state => {
-      this.currentPlayerState = state;
-    });
-
-    this.subscriptions.push(currentItemSub, nextItemSub, transitionSub, errorSub, playerStateSub);
-
-    // Start playback
-    this.playbackService.startPlayback();
-  }
-
-  private setupScheduleChecking(): void {
-    // Initial check on startup with a small delay to ensure everything is loaded
-    setTimeout(() => {
-      this.logService.info('Performing initial schedule check');
-      this.checkScheduleAndReload();
-    }, 3000);
-    
-    // Check more frequently - every 20 seconds instead of every minute
-    this.scheduleCheckInterval = interval(20000).subscribe(() => {
-      const now = new Date();
-      this.logService.debug(`Schedule check at ${now.toTimeString()}`);
-      this.checkScheduleAndReload();
-    });
-    
-    // Setup more precise checks exactly at scheduled times
-    this.setupTargetedScheduleChecks();
-  }
-
-  // Helper method to check schedule and reload if needed
-  private checkScheduleAndReload(): void {
-    this.scheduleService.checkSchedule().subscribe(
-      (changed: boolean) => {
-        if (changed) {
-          this.logService.info('Schedule changed, reloading playlist');
-          this.playbackService.reloadPlaylist();
-        } else {
-          this.logService.debug('No schedule changes detected');
-        }
-      },
-      (error: any) => {
-        this.logService.error(`Schedule check error: ${error}`);
-      }
-    );
-  }
-
-  // New method to set up targeted checks at known schedule times
-  private setupTargetedScheduleChecks(): void {
-    // First clear any existing interval
-    if (this.preciseMinuteInterval) {
-      clearInterval(this.preciseMinuteInterval);
-      this.preciseMinuteInterval = null;
+  // Force a much more aggressive reload of a playlist
+  private forceReloadPlaylist(playlistId: string): void {
+    // Cancel any existing reload
+    if (this.forceReloadTimeoutId) {
+      clearTimeout(this.forceReloadTimeoutId);
     }
     
-    // Get all scheduled playlists and set up targeted checks for each transition time
-    const deviceId = localStorage.getItem('deviceId');
-    if (!deviceId) return;
-    
-    this.logService.info('Setting up targeted schedule checks');
-    
-    // Get screen configuration with schedules
-    this.supabaseApi.getScreenById(deviceId).subscribe(screen => {
-      if (!screen || !screen.schedule || !screen.schedule.upcoming) {
-        this.logService.warn('No schedules found for targeted checks');
-        return;
-      }
-      
-      // Extract all unique transition times
-      const transitionTimes = new Set<string>();
-      screen.schedule.upcoming.forEach(schedule => {
-        transitionTimes.add(schedule.start_time);
-        transitionTimes.add(schedule.end_time);
-      });
-      
-      this.logService.info(`Found ${transitionTimes.size} unique transition times to monitor`);
-      
-      // For each transition time, set up a check 5 seconds before and after the scheduled time
-      transitionTimes.forEach(timeStr => {
-        this.setupTransitionTimeChecks(timeStr);
-      });
+    // Reset component state
+    this.zone.run(() => {
+      this.currentItem = null;
+      this.nextItem = null;
+      this.isTransitioning = false;
     });
-  }
-
-  // New method to set up checks for a specific schedule transition time
-  private setupTransitionTimeChecks(timeStr: string): void {
-    const [hours, minutes] = timeStr.split(':').map(Number);
     
-    // Calculate milliseconds until the next occurrence of this time
-    const calculateMsToTime = (): number => {
-      const now = new Date();
-      const target = new Date();
-      
-      target.setHours(hours, minutes, 0, 0);
-      
-      // If the target time is already passed for today, schedule for tomorrow
-      if (now > target) {
-        target.setDate(target.getDate() + 1);
-      }
-      
-      return target.getTime() - now.getTime();
-    };
-    
-    // Set up targeted checks for this time
-    const scheduleNextCheck = () => {
-      const msToTime = calculateMsToTime();
-      
-      // Schedule check 5 seconds before the transition time
-      const beforeCheck = setTimeout(() => {
-        this.logService.info(`Pre-transition check for ${timeStr}`);
-        this.checkScheduleAndReload();
-      }, msToTime - 5000);
-      
-      // Schedule check exactly at the transition time
-      const exactCheck = setTimeout(() => {
-        this.logService.info(`Exact transition check for ${timeStr}`);
-        this.checkScheduleAndReload();
-      }, msToTime);
-      
-      // Schedule check 5 seconds after the transition time
-      const afterCheck = setTimeout(() => {
-        this.logService.info(`Post-transition check for ${timeStr}`);
-        this.checkScheduleAndReload();
-        
-        // Set up the next day's check
-        scheduleNextCheck();
-      }, msToTime + 5000);
-      
-      // Store the timeouts so they can be cleared if needed
-      this.transitionTimeoutIds.push(beforeCheck, exactCheck, afterCheck);
-    };
-    
-    // Start the process
-    scheduleNextCheck();
-    this.logService.info(`Set up transition checks for time: ${timeStr}`);
-  }
-
-  // Add precise timing checks
-  private setupPreciseMinuteChecks(): void {
-    // Check how many milliseconds until the next minute boundary
-    const now = new Date();
-    const msToNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
-    
-    // Set up a timeout to check at the next minute boundary
-    setTimeout(() => {
-      this.logService.info('Checking schedule at minute boundary');
-      this.checkScheduleAndReload();
-      
-      // Then set up an interval to check every minute precisely
-      this.preciseMinuteInterval = setInterval(() => {
-        const d = new Date();
-        this.logService.info(`Precise minute check: ${d.toTimeString()}`);
-        this.checkScheduleAndReload();
-      }, 60000);
-    }, msToNextMinute);
+    // Allow time for the reset to take effect in the UI
+    this.forceReloadTimeoutId = setTimeout(() => {
+      this.zone.run(() => {
+        this.logService.info(`Force reloading playlist: ${playlistId}`);
+        this.playbackService.loadPlaylist(playlistId);
+      });
+    }, 300); // Give time for the UI to refresh
   }
 
   private startHeartbeat(): void {
@@ -464,6 +518,10 @@ export class PlayerComponent implements OnInit, OnDestroy {
   
   // Force reload the current playlist
   reloadPlaylist(): void {
-    this.playbackService.reloadPlaylist();
+    if (this.currentPlayerState?.currentPlaylistId) {
+      this.forceReloadPlaylist(this.currentPlayerState.currentPlaylistId);
+    } else {
+      this.playbackService.reloadPlaylist();
+    }
   }
 }
